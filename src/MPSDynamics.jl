@@ -34,7 +34,15 @@ if length(ARGS) > 0 && ARGS[1] == "GPU"
   #end
 
   using CUDA
-  using NCCL
+  # NCCL support is optional - only needed for multi-GPU
+  nccl_available = false
+  try
+    @eval using NCCL
+    global nccl_available = true
+  catch
+    @warn "NCCL.jl package not found. Multi-GPU support will be limited."
+    @warn "To enable full multi-GPU support, install NCCL.jl: ]add https://github.com/JuliaGPU/NCCL.jl"
+  end
   # We also overwrite @tensor; this does most of the GPU acceleration for us.
   import TensorOperations: @cutensor as @tensor
   
@@ -44,9 +52,13 @@ if length(ARGS) > 0 && ARGS[1] == "GPU"
     GPU_DEVICES = collect(0:CUDA.ndevices()-1)
     println("Detected $(length(GPU_DEVICES)) GPUs, enabling multi-GPU support")
     
-    # Create NCCL communicator for all available GPUs
-    global NCCL_COMM = NCCL.Communicator(GPU_DEVICES)
-    println("Initialized NCCL communicator for devices: $(GPU_DEVICES)")
+    # Create NCCL communicator for all available GPUs if NCCL is available
+    if nccl_available
+      global NCCL_COMM = NCCL.Communicator(GPU_DEVICES)
+      println("Initialized NCCL communicator for devices: $(GPU_DEVICES)")
+    else
+      println("NCCL not available - using basic multi-GPU mode without collective operations")
+    end
     
     # Set current device to the first one by default
     CUDA.device!(GPU_DEVICES[1])

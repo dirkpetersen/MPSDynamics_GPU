@@ -1,8 +1,15 @@
 module GPUUtils
 
 using CUDA
-using NCCL
 using LinearAlgebra
+
+# Check if NCCL is available
+const nccl_available = try
+    using NCCL
+    true
+catch
+    false
+end
 
 export distribute_to_gpus, gather_from_gpus, sync_all_gpus
 export get_gpu_for_task, with_device
@@ -84,6 +91,8 @@ end
     gather_from_gpus(distributed_data, task_ids; reduce_op=+)
 
 Gather data from multiple GPUs and combine using the specified reduction operation.
+If NCCL is available, uses collective operations for efficiency; otherwise falls back
+to a manual gather and reduce approach.
 """
 function gather_from_gpus(distributed_data::Dict{Int, <:CuArray}, task_ids::Vector{Int}; 
                           reduce_op=+)
@@ -96,21 +105,45 @@ function gather_from_gpus(distributed_data::Dict{Int, <:CuArray}, task_ids::Vect
     first_array = distributed_data[task_ids[1]]
     result = similar(first_array)
     
-    # Use NCCL to efficiently combine data across GPUs
-    comm = Main.MPSDynamics.NCCL_COMM
-    
-    # This is a simplified version - in reality, you would need to 
-    # handle different reduction operations and data types properly
-    if reduce_op == +
-        NCCL.allreduce!(first_array, result, NCCL.sum, comm)
-    elseif reduce_op == *
-        NCCL.allreduce!(first_array, result, NCCL.prod, comm)
-    elseif reduce_op == max
-        NCCL.allreduce!(first_array, result, NCCL.max, comm)
-    elseif reduce_op == min
-        NCCL.allreduce!(first_array, result, NCCL.min, comm)
+    # Check if NCCL is available for efficient collective operations
+    if nccl_available && @isdefined(Main.MPSDynamics.NCCL_COMM)
+        # Use NCCL to efficiently combine data across GPUs
+        comm = Main.MPSDynamics.NCCL_COMM
+        
+        # This is a simplified version - in reality, you would need to 
+        # handle different reduction operations and data types properly
+        if reduce_op == +
+            NCCL.allreduce!(first_array, result, NCCL.sum, comm)
+        elseif reduce_op == *
+            NCCL.allreduce!(first_array, result, NCCL.prod, comm)
+        elseif reduce_op == max
+            NCCL.allreduce!(first_array, result, NCCL.max, comm)
+        elseif reduce_op == min
+            NCCL.allreduce!(first_array, result, NCCL.min, comm)
+        else
+            error("Unsupported reduction operation")
+        end
     else
-        error("Unsupported reduction operation")
+        # Fallback implementation without NCCL
+        # Copy first array to result
+        CUDA.copyto!(result, first_array)
+        
+        # Manually gather and reduce from other GPUs
+        for task_id in task_ids[2:end]
+            other_array = distributed_data[task_id]
+            # Move to CPU for reduction if they're on different devices
+            if reduce_op == +
+                result .+= other_array
+            elseif reduce_op == *
+                result .*= other_array
+            elseif reduce_op == max
+                result .= max.(result, other_array)
+            elseif reduce_op == min
+                result .= min.(result, other_array)
+            else
+                error("Unsupported reduction operation")
+            end
+        end
     end
     
     return result

@@ -3,7 +3,9 @@
 # Example script for running a TDVP simulation with multi-GPU support
 # Usage: julia multi_gpu_test.jl GPU MULTI_GPU
 # This will use all available GPUs on the system
+#
 
+#add https://github.com/dirkpetersen/MPSDynamics_GPU.git
 using MPSDynamics
 
 # Parameters
