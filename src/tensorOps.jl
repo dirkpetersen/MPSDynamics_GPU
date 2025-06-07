@@ -5,6 +5,7 @@
 # as well)
 if GPU
     import KrylovKit: exponentiate
+    
     """
         exponentiate(A,t::Number,x,tol = 1e-12,maxiter = 50)
 
@@ -17,8 +18,22 @@ if GPU
     The power series has the form
 
         x + t * A(x) + t ** 2 * A ** 2(x) / 2 + t ** 3 * A ** 3(x) / 6 + ...
+        
+    In multi-GPU mode, this function will use the GPU assigned to the current task.
     """
-    function exponentiate(A,t::Number,x;tol = 1e-12,maxiter = 250,kwargs...)
+    function exponentiate(A, t::Number, x; tol = 1e-12, maxiter = 250, task_id=nothing, kwargs...)
+        # If multi-GPU is enabled and a task ID is provided, use the appropriate GPU
+        if @isdefined(MULTI_GPU) && MULTI_GPU && task_id !== nothing
+            device_id = GPUUtils.get_gpu_for_task(task_id)
+            return GPUUtils.with_device(() -> _exponentiate_impl(A, t, x, tol, maxiter), device_id)
+        else
+            # Otherwise run on current GPU
+            return _exponentiate_impl(A, t, x, tol, maxiter)
+        end
+    end
+    
+    # Implementation of exponentiate that runs on the current GPU
+    function _exponentiate_impl(A, t::Number, x, tol, maxiter)
         counter = 0
         converged = false
         temp_x = CuArray(deepcopy(x))

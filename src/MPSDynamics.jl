@@ -1,6 +1,9 @@
 module MPSDynamics
 
 GPU = false
+MULTI_GPU = false
+GPU_DEVICES = []
+
 if length(ARGS) > 0 && ARGS[1] == "GPU"
 
   # A CUDA compatible macro to overwrite TensorOperations.@tensoropt
@@ -31,8 +34,31 @@ if length(ARGS) > 0 && ARGS[1] == "GPU"
   #end
 
   using CUDA
+  using NCCL
   # We also overwrite @tensor; this does most of the GPU acceleration for us.
   import TensorOperations: @cutensor as @tensor
+  
+  # Initialize multi-GPU support if more than one GPU is available
+  if length(CUDA.devices()) > 1 && (length(ARGS) > 1 && ARGS[2] == "MULTI_GPU")
+    MULTI_GPU = true
+    GPU_DEVICES = collect(0:CUDA.ndevices()-1)
+    println("Detected $(length(GPU_DEVICES)) GPUs, enabling multi-GPU support")
+    
+    # Create NCCL communicator for all available GPUs
+    global NCCL_COMM = NCCL.Communicator(GPU_DEVICES)
+    println("Initialized NCCL communicator for devices: $(GPU_DEVICES)")
+    
+    # Set current device to the first one by default
+    CUDA.device!(GPU_DEVICES[1])
+  else
+    if length(CUDA.devices()) > 1
+      println("Multiple GPUs detected ($(length(CUDA.devices()))), but multi-GPU mode not enabled.")
+      println("To enable, run with 'julia yourscript.jl GPU MULTI_GPU'")
+    end
+    GPU_DEVICES = [0] # Default to first GPU
+    CUDA.device!(GPU_DEVICES[1])
+    println("Running on single GPU: $(CUDA.name())")
+  end
 
   using LinearAlgebra
 
@@ -102,7 +128,7 @@ if length(ARGS) > 0 && ARGS[1] == "GPU"
   #end
 
   GPU = true
-  println("Attempting to run on GPUs")
+  println("GPU acceleration enabled")
   # make sure to load cuTensor
 
 else
@@ -126,6 +152,8 @@ include("treeIterators.jl")
 include("treeMeasure.jl")
 include("treeTDVP.jl")
 include("treeDTDVP.jl")
+include("gpuutils.jl")
+include("multiGPUtree.jl")
 include("mpsBasics.jl")
 include("chainTDVP.jl")
 include("chain2TDVP.jl")
@@ -137,6 +165,7 @@ include("run_1TDVP.jl")
 include("run_2TDVP.jl")
 include("run_DTDVP.jl")
 include("run_A1TDVP.jl")
+include("run_MGPUTDVP.jl")
 
 include("chainA1TDVP.jl")
  
